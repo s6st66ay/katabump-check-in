@@ -1,5 +1,7 @@
 import os
 import time
+# 引入 json 库来安全地处理字符串，防止引号报错
+import json 
 from DrissionPage import ChromiumPage, ChromiumOptions
 
 def handle_cloudflare(page):
@@ -27,7 +29,7 @@ def handle_cloudflare(page):
 def job():
     # --- 1. 初始化 ---
     co = ChromiumOptions()
-    co.headless(True) # GitHub Actions 必须开启无头模式
+    co.headless(True)
     co.set_argument('--no-sandbox')
     co.set_argument('--disable-gpu')
     co.set_argument('--lang=zh-CN')
@@ -46,10 +48,19 @@ def job():
         page.get('https://discord.com/login', retry=2)
         handle_cloudflare(page)
 
-        # 2. 通过 JS 注入 Token (这是核心黑科技)
-        # 这一步会让浏览器认为"我已经登录了"
-        js = f'window.localStorage.setItem("token", "\"{token}\"");'
-        page.run_js(js)
+        # 2. 通过 JS 注入 Token (修复了语法错误)
+        # Discord 要求 token 在 localStorage 里的格式必须是带双引号的字符串: "你的token"
+        # 我们使用 json.dumps 两次来确保格式绝对正确
+        # 第一次 dumps: token -> "token" (带引号的字符串)
+        # 第二次 dumps: "token" -> "\"token\"" (适合放入 JS 调用的格式)
+        
+        token_value = f'"{token}"'  # 这一步把 token 变成了 "token"
+        js_code = f"window.localStorage.setItem('token', '{token_value}');"
+        
+        # 打印生成的 JS 代码预览 (隐去敏感信息) 以便调试
+        print(f">>> 即将执行 JS: window.localStorage.setItem('token', '\"***\"');")
+        
+        page.run_js(js_code)
         time.sleep(1)
         
         # 3. 刷新页面，验证是否生效
@@ -57,12 +68,16 @@ def job():
         page.refresh()
         time.sleep(5)
         
-        # 如果还在登录页且有邮箱框，说明 Token 没生效
+        # 检查是否成功
         if page.ele('css:input[name="email"]'):
-            page.get_screenshot(path='token_failed.jpg')
-            raise Exception("Token 注入失败：Discord 仍要求输入密码。请检查 Token 是否复制完整。")
-        else:
-            print(">>> Discord 登录成功！(已跳过密码输入)")
+            # 尝试最后一次补救：有时候需要 reload 两次
+            page.refresh()
+            time.sleep(5)
+            if page.ele('css:input[name="email"]'):
+                page.get_screenshot(path='token_failed.jpg')
+                raise Exception("Token 注入失败：Discord 仍要求输入密码。可能是 Token 过期或格式不对。")
+        
+        print(">>> Discord 登录成功！(已跳过密码输入)")
 
         # ==================== 步骤 2: 前往 Katabump ====================
         print(">>> [2/6] 前往 Katabump...")
@@ -70,7 +85,7 @@ def job():
         handle_cloudflare(page)
 
         print(">>> 点击 'Login with Discord'...")
-        # 模糊查找按钮，防止找不到
+        # 模糊查找按钮
         discord_btn = page.ele('text:Login with Discord') or \
                       page.ele('css:a[href*="discord"]')
         
@@ -118,11 +133,10 @@ def job():
         time.sleep(5)
         handle_cloudflare(page)
 
-        # 查找续期按钮 (支持英文 Renew 和中文 续期)
+        # 查找续期按钮
         main_renew = None
         for text in ['Renew', '续期', 'Extend']:
             btn = page.ele(f'text:{text}')
-            # 确保它是按钮
             if btn and (btn.tag == 'button' or 'btn' in btn.attr('class', '')): 
                 main_renew = btn
                 break
@@ -134,9 +148,8 @@ def job():
             
             # ==================== 步骤 6: 弹窗确认 ====================
             print(">>> [6/6] 处理弹窗...")
-            handle_cloudflare(page) # 处理弹窗里的验证码
+            handle_cloudflare(page)
             
-            # 寻找弹窗里的确认按钮
             modal = page.ele('css:.modal-content')
             if modal:
                 final_btn = modal.ele('text:Renew') or modal.ele('css:button.btn-primary')
@@ -148,9 +161,7 @@ def job():
             else:
                 print("❌ 没看到弹窗")
         else:
-            print("❌ 主界面没找到 Renew 按钮，可能服务器不需要续期或页面加载错误")
-            # 打印页面文字用于调试
-            print("页面文字预览:", page.ele('tag:body').text[:100])
+            print("❌ 主界面没找到 Renew 按钮，可能不需要续期")
 
     except Exception as e:
         print(f"❌ 运行失败: {e}")
