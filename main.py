@@ -60,29 +60,23 @@ def find_element_robust(page, selectors, timeout=15):
     return None
 
 def job():
-    # --- 1. 浏览器初始化 (针对 GitHub Actions 的核心修复) ---
+    # --- 1. 浏览器初始化 ---
     co = ChromiumOptions()
     
-    # 【修复重点 1】使用新版无头模式 (报错提示要求的)
-    co.set_argument('--headless=new')
-    
-    # 【修复重点 2】解决 Linux 容器内存不足导致崩溃的问题 (至关重要)
-    co.set_argument('--disable-dev-shm-usage') 
-    
-    # 常规 Linux 必备参数
+    # 针对 GitHub Actions 环境的关键配置
+    co.set_argument('--headless=new')       # 新版无头模式
+    co.set_argument('--disable-dev-shm-usage') # 防止内存崩溃
     co.set_argument('--no-sandbox')
     co.set_argument('--disable-gpu')
     co.set_argument('--ignore-certificate-errors')
-    
-    # 模拟真实用户
     co.set_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     
-    # 尝试自动寻找系统安装的 Chrome (GitHub Actions 环境通常在标准路径)
     co.auto_port() 
 
     page = ChromiumPage(co)
-    # 设置全局超时
-    page.set.timeout(20)
+    
+    # 【修复重点】修改为复数形式 timeouts
+    page.set.timeouts(20)
     
     try:
         # ==================== 步骤 1: 强力注入 Token ====================
