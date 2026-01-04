@@ -1,44 +1,56 @@
-name: Katabump Token Renew
+name: Katabump Auto Renew
 
 on:
   schedule:
+    # 计划任务：每 3 天的 UTC时间 02:00 (北京时间 10:00) 运行一次
     - cron: '0 2 */3 * *'
-  workflow_dispatch:
+  workflow_dispatch: # 允许手动点击 "Run workflow" 按钮触发
 
 jobs:
   renew_job:
     runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
 
+    steps:
+      # 1. 拉取代码
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. 准备 Python 环境
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
+      # 3. 安装 Chrome 浏览器
       - name: Install Chrome
         run: |
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
 
+      # 4. 安装依赖库
+      # main.py 用到了 DrissionPage (浏览器控制) 和 requests (下载插件)
       - name: Install Dependencies
-        run: pip install DrissionPage
+        run: pip install DrissionPage requests
 
+      # 5. 运行续期脚本
       - name: Run Renew Script
         env:
-          # ⚠️⚠️⚠️ 关键在这里！必须把 Secret 传递给环境变量 ⚠️⚠️⚠️
-          # 之前的配置是 DISCORD_COOKIE_STRING，现在必须改成下面这样：
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+          # ⚠️ 关键：将 GitHub Secrets 里的账号密码传递给脚本
+          KB_EMAIL: ${{ secrets.KB_EMAIL }}
+          KB_PASSWORD: ${{ secrets.KB_PASSWORD }}
         run: |
+          # 启动虚拟显示器 (Xvfb) 以适配 DrissionPage 在 Linux 下的运行
           export DISPLAY=:99
-          sudo Xvfb -ac :99 -screen 0 1280x1024x16 > /dev/null 2>&1 &
+          sudo Xvfb -ac :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
+          
+          # 执行 Python 脚本
           python main.py
-      
-      - name: Upload Debug Screenshot
-        if: failure()
+
+      # 6. 失败时上传截图 (方便调试)
+      - name: Upload Debug Screenshots
+        if: failure() # 只有运行失败时才执行这一步
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
           path: '*.jpg'
+          retention-days: 3
