@@ -49,32 +49,64 @@ def wait_for_cloudflare(page, timeout=20):
     return False
 
 def robust_click(ele):
-    """
-    【核心函数】多重保障点击逻辑
-    1. 滚动到可见
-    2. 等待可见
-    3. 优先 JS 点击 (无视遮挡/无位置)
-    4. 失败则退回普通点击
-    """
+    """多重保障点击逻辑"""
     try:
-        # 措施1: 滚动到视野中
         ele.scroll.to_see()
         time.sleep(0.5)
-        
-        # 措施2: 强制使用 JS 点击 (这是解决 '没有位置或大小' 的关键)
         print(">>> [动作] 尝试 JS 暴力点击...")
         ele.click(by_js=True)
         return True
     except Exception as e:
         print(f"⚠️ JS点击失败 ({e})，尝试普通点击...")
         try:
-            # 措施3: 如果 JS 失败，等待元素在屏幕上完全可见再点
             ele.wait.displayed(timeout=3)
             ele.click()
             return True
         except Exception as e2:
             print(f"❌ 点击彻底失败: {e2}")
             return False
+
+def safe_screenshot(page, name):
+    """安全截图，防卡死"""
+    try:
+        page.set.timeouts(10)
+        page.get_screenshot(path=name)
+        print(f"📸 截图已保存: {name}")
+    except Exception as e:
+        print(f"⚠️ 截图失败 (不影响任务结果): {e}")
+
+def check_renewal_result(page):
+    """
+    【核心新功能】检查续期结果
+    判断是成功了，还是提示'还没到时间'
+    """
+    print(">>> [6/5] 正在检查操作结果...")
+    start_time = time.time()
+    
+    # 轮询检测页面上的提示信息 (最多等 10 秒)
+    while time.time() - start_time < 10:
+        html = page.html
+        
+        # 情况 A: 未到期 (根据您的截图)
+        # 关键词: "You can't renew your server yet"
+        if "can't renew your server yet" in html:
+            print("⚠️ 检测到提示：当前还不能续期 (You can't renew your server yet)。")
+            print(">>> 结论：服务器未到期，无需操作。任务视为成功。")
+            safe_screenshot(page, 'result_too_early.jpg')
+            return True
+            
+        # 情况 B: 成功
+        # 关键词: "successfully" 或 "extended" (常见的成功提示)
+        if "successfully" in html or "extended" in html:
+            print("🎉🎉🎉 检测到成功提示！续期已完成。")
+            safe_screenshot(page, 'result_success.jpg')
+            return True
+            
+        time.sleep(1)
+        
+    print("❓ 未检测到明确的成功或失败提示，默认视为操作已提交。")
+    safe_screenshot(page, 'result_unknown.jpg')
+    return True
 
 def job():
     ext_path = download_and_extract_silk_extension()
@@ -131,22 +163,17 @@ def job():
                     page.ele('text:Renew')
         
         if renew_btn:
-            robust_click(renew_btn) # 使用增强点击
+            robust_click(renew_btn)
             print(">>> 已点击主按钮，等待弹窗加载...")
-            time.sleep(5) # 多等一会，让弹窗动画跑完
+            time.sleep(5)
             
-            # ==================== 4. 处理弹窗 (终极防护) ====================
+            # ==================== 4. 处理弹窗 ====================
             print(">>> [5/5] 处理续期弹窗...")
-            
-            # 1. 必须先处理弹窗里的 Cloudflare
             wait_for_cloudflare(page)
             
-            # 2. 寻找弹窗
             modal = page.ele('css:.modal-content')
             if modal:
                 print(">>> 检测到弹窗，寻找蓝色确认按钮...")
-                
-                # 寻找按钮 (尝试多种定位方式)
                 confirm_btn = modal.ele('css:button.btn-primary') or \
                               modal.ele('css:button[type="submit"]') or \
                               modal.ele('xpath:.//button[contains(text(), "Renew")]')
@@ -154,32 +181,28 @@ def job():
                 if confirm_btn:
                     print(f">>> 找到按钮: {confirm_btn.tag} | 文本: {confirm_btn.text}")
                     
-                    # 措施4: 检查按钮是否可用
-                    if not confirm_btn.states.is_enabled:
-                         print("⚠️ 按钮是灰色的 (Disabled)，可能还未到续期时间。")
-                         # 即使是灰色的，也截个图留证
-                         page.get_screenshot(path='renew_disabled.jpg')
+                    # 点击确认
+                    if robust_click(confirm_btn):
+                        print(">>> 点击确认指令已发送，等待页面反馈...")
+                        time.sleep(3) 
+                        
+                        # 【调用结果检测】
+                        check_renewal_result(page)
+                        
+                        print("✅✅✅ 脚本运行结束")
                     else:
-                        # 【调用核心防护函数】
-                        if robust_click(confirm_btn):
-                            print("🎉🎉🎉 点击确认指令已发送！")
-                            time.sleep(3)
-                            # 截图确认结果
-                            page.get_screenshot(path='success_confirm.jpg')
-                        else:
-                             raise Exception("点击操作最终失败")
+                         raise Exception("点击操作最终失败")
                 else:
                     print("❌ 弹窗内未找到可点击的按钮")
-                    print(f"DEBUG Modal HTML: {modal.html[:500]}")
             else:
                 print("❌ 未检测到弹窗元素 (.modal-content)")
         else:
             print("⚠️ 主界面未找到 Renew 按钮 (可能已续期)")
-            page.get_screenshot(path='no_renew.jpg')
+            safe_screenshot(page, 'no_renew.jpg')
 
     except Exception as e:
         print(f"❌ 运行出错: {e}")
-        try: page.get_screenshot(path='error.jpg', full_page=True)
+        try: safe_screenshot(page, 'error.jpg')
         except: pass
         exit(1)
     finally:
