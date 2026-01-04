@@ -7,7 +7,7 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 
 def download_and_extract_silk_extension():
     """
-    自动下载并解压 Silk 插件 (用于过 Cloudflare)
+    自动下载并解压 Silk 插件
     """
     extension_id = "ajhmfdgkijocedmfjonnpjfojldioehi"
     crx_path = "silk.crx"
@@ -25,7 +25,6 @@ def download_and_extract_silk_extension():
         resp = requests.get(download_url, headers=headers, stream=True)
         if resp.status_code == 200:
             content = resp.content
-            # 跳过 CRX 头寻找 Zip 头
             zip_start = content.find(b'PK\x03\x04')
             if zip_start == -1:
                 print("❌ 错误：CRX 格式异常")
@@ -50,7 +49,6 @@ def wait_for_cloudflare(page, timeout=20):
             print("--- [盾] 通行！ ---")
             return True
         try:
-            # 辅助点击
             iframe = page.get_frame('@src^https://challenges.cloudflare.com')
             if iframe: iframe.ele('tag:body').click(by_js=True)
         except: pass
@@ -78,54 +76,52 @@ def job():
     except: pass
 
     try:
-        # ==================== 步骤 1: 登录 (账号密码) ====================
-        print(">>> [1/5] 前往 Katabump 登录页...")
-        # 获取账号密码 Secret
+        # ==================== 步骤 0: 检查配置 ====================
         email = os.environ.get("KB_EMAIL")
         password = os.environ.get("KB_PASSWORD")
+        # ⚠️ 新增：获取续期链接变量
+        target_url = os.environ.get("KB_RENEW_URL")
         
         if not email or not password:
-            raise Exception("❌ 请在 GitHub Secrets 配置 KB_EMAIL 和 KB_PASSWORD")
+            raise Exception("❌ 请配置 KB_EMAIL 和 KB_PASSWORD")
+        if not target_url:
+            raise Exception("❌ 请在 GitHub Secrets 配置 KB_RENEW_URL (填入续期页面的完整链接)")
 
+        # ==================== 步骤 1: 登录 ====================
+        print(">>> [1/5] 前往登录页...")
         page.get('https://dashboard.katabump.com/auth/login', retry=3)
         wait_for_cloudflare(page)
         
-        # 判断是否需要登录
         if "auth/login" in page.url:
-            print(">>> 检测到登录表单，输入账号密码...")
-            
-            # 定位输入框 (根据 Pterodactyl 面板标准)
+            print(">>> 输入账号密码...")
             ele_email = page.ele('css:input[name="email"]')
             ele_pass = page.ele('css:input[name="password"]')
-            # 定位登录按钮 (通常是 type=submit 的按钮)
             btn_login = page.ele('css:button[type="submit"]')
             
             if ele_email and ele_pass and btn_login:
                 ele_email.input(email)
                 ele_pass.input(password)
                 time.sleep(1)
-                print(">>> 点击登录...")
                 btn_login.click()
             else:
                 page.get_screenshot(path='login_form_missing.jpg')
-                raise Exception("❌ 未找到账号/密码输入框")
+                raise Exception("❌ 未找到输入框")
             
-            # 等待跳转
-            print(">>> 等待登录跳转...")
+            print(">>> 等待跳转...")
             time.sleep(5)
             wait_for_cloudflare(page)
         
         # ==================== 步骤 2: 验证登录 ====================
         if "login" in page.url:
             page.get_screenshot(path='login_fail.jpg')
-            print(f"DEBUG HTML: {page.html[:300]}")
-            raise Exception("❌ 登录失败：仍停留在登录页 (可能是账号密码错误或验证码拦截)")
+            raise Exception("❌ 登录失败：仍停留在登录页")
         
-        print(">>> ✅ 登录成功，进入 Dashboard！")
+        print(">>> ✅ 登录成功！")
 
-        # ==================== 步骤 3: 直达服务器 ====================
-        target_url = "https://dashboard.katabump.com/servers/edit?id=197288"
-        print(f">>> [3/5] 进入服务器: {target_url}")
+        # ==================== 步骤 3: 直达服务器 (使用变量) ====================
+        print(f">>> [3/5] 进入目标服务器页面...")
+        print(f"Target URL: {target_url}") # 打印一下确认链接对不对
+        
         page.get(target_url, retry=3)
         page.wait.load_start()
         wait_for_cloudflare(page)
@@ -133,24 +129,20 @@ def job():
 
         # ==================== 步骤 4: 点击续期 ====================
         print(">>> [4/5] 寻找 Renew 按钮...")
-        # 查找 Renew, 续期, 或包含 Renew 的按钮
         renew_btn = page.ele('text:Renew') or \
                     page.ele('text:续期') or \
                     page.ele('css:button:contains("Renew")')
         
         if renew_btn:
-            # 滚动确保可见
-            # page.scroll.to_see(renew_btn)
             renew_btn.click()
             print(">>> 点击 Renew，等待弹窗...")
             time.sleep(3)
-            wait_for_cloudflare(page) # 弹窗里可能也有盾
+            wait_for_cloudflare(page)
             
             # ==================== 步骤 5: 确认弹窗 ====================
             print(">>> [5/5] 确认续期...")
             modal = page.ele('css:.modal-content')
             if modal:
-                # 在弹窗里找确认按钮 (通常是蓝色的 Primary 按钮)
                 confirm = modal.ele('text:Renew') or \
                           modal.ele('css:button[type="submit"]') or \
                           modal.ele('css:button.btn-primary')
@@ -163,7 +155,7 @@ def job():
             else:
                 print("❌ 未检测到弹窗")
         else:
-            print("⚠️ 未找到 Renew 按钮 (可能已续期或布局改变)")
+            print("⚠️ 未找到 Renew 按钮 (可能已续期)")
             page.get_screenshot(path='no_renew.jpg')
 
     except Exception as e:
