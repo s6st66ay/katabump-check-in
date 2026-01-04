@@ -14,36 +14,38 @@ def log(message):
 
 def download_cf_autoclicker():
     """
-    【核心升级】下载 cf-autoclick 插件
-    GitHub: https://github.com/tenacious6/cf-autoclick
+    【修正】下载 cf-autoclick 插件
+    使用您提供的 master 分支链接
     """
-    repo_name = "cf-autoclick-main"
-    extract_dir = "extensions"
-    final_path = os.path.abspath(os.path.join(extract_dir, repo_name))
+    # 插件解压后的预期文件夹名
+    expected_folder_name = "cf-autoclick-master"
+    extract_root = "extensions"
+    final_path = os.path.abspath(os.path.join(extract_root, expected_folder_name))
     
-    # 如果已经存在，直接返回
+    # 如果已经下载并解压过，直接返回
     if os.path.exists(final_path):
         log(">>> [插件] cf-autoclick 已就绪")
         return final_path
         
-    log(">>> [插件] 正在下载 cf-autoclick 神器...")
+    log(">>> [插件] 正在下载 cf-autoclick (Master分支)...")
     try:
-        # 下载 GitHub 源码 Zip
-        url = "https://github.com/tenacious6/cf-autoclick/archive/refs/heads/main.zip"
+        # 您提供的正确链接
+        url = "https://codeload.github.com/tenacious6/cf-autoclick/zip/refs/heads/master"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(url, headers=headers, stream=True)
         
         if resp.status_code == 200:
-            if not os.path.exists(extract_dir): os.makedirs(extract_dir)
+            if not os.path.exists(extract_root): os.makedirs(extract_root)
             
             # 解压
             with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-                zf.extractall(extract_dir)
+                zf.extractall(extract_root)
                 
             log(f">>> [插件] 下载并解压完成: {final_path}")
             return final_path
         else:
             log(f"❌ [插件] 下载失败，状态码: {resp.status_code}")
+            log(f"   链接: {url}")
     except Exception as e:
         log(f"❌ [插件] 安装异常: {e}")
     
@@ -52,8 +54,8 @@ def download_cf_autoclicker():
 # ==================== 核心逻辑 ====================
 
 def pass_full_page_shield(page):
-    """处理全屏盾 (插件会自动处理，这里只需等待)"""
-    for _ in range(5): # 最多等 10 秒
+    """处理全屏盾 (等待插件)"""
+    for _ in range(5):
         if "just a moment" in page.title.lower():
             log("--- [门神] 全屏盾出现，等待插件自动突破...")
             time.sleep(2)
@@ -65,7 +67,6 @@ def analyze_page_result(page):
     """解析结果"""
     log(">>> [系统] 检查页面提示...")
     
-    # 红色警告
     danger = page.ele('css:.alert.alert-danger')
     if danger and danger.states.is_displayed:
         text = danger.text
@@ -73,10 +74,9 @@ def analyze_page_result(page):
         if "can't renew" in text.lower():
             return "SUCCESS_TOO_EARLY"
         elif "captcha" in text.lower():
-            return "FAIL_CAPTCHA" # 说明插件可能没来得及点
+            return "FAIL_CAPTCHA"
         return "FAIL_OTHER"
 
-    # 绿色成功
     success = page.ele('css:.alert.alert-success')
     if success and success.states.is_displayed:
         log(f"⬇️ 绿色提示: {success.text}")
@@ -87,22 +87,22 @@ def analyze_page_result(page):
 
 # ==================== 主程序 ====================
 def job():
-    # 1. 下载插件
+    # 1. 下载插件 (使用修正后的链接)
     ext_path = download_cf_autoclicker()
     
     co = ChromiumOptions()
-    co.set_argument('--headless=new') # 必须用 new 模式才支持插件
+    co.set_argument('--headless=new') 
     co.set_argument('--no-sandbox')
     co.set_argument('--disable-gpu')
     co.set_argument('--disable-dev-shm-usage')
     co.set_argument('--window-size=1920,1080')
     co.set_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     
-    # 2. 加载插件
+    # 2. 挂载插件
     if ext_path: 
         co.add_extension(ext_path)
     else:
-        log("⚠️ 警告: 插件未安装成功，脚本可能无法通过验证！")
+        log("⚠️ 警告: 插件下载失败，脚本将尝试裸奔 (成功率低)！")
         
     co.auto_port()
     page = ChromiumPage(co)
@@ -150,17 +150,14 @@ def job():
                 
                 if modal:
                     # ==========================================
-                    # 关键修改：不需要脚本去点验证码了！
-                    # 插件会自动检测 iframe 并点击
-                    # 我们只需要给它足够的时间 (10秒)
+                    # 插件时刻
                     # ==========================================
                     log(">>> [插件] 弹窗已出，等待插件自动过盾 (10s)...")
                     
-                    # 为了保险，我们还是确保 iframe 加载出来了再等
-                    # 这样能保证插件已经检测到了目标
+                    # 确保 iframe 出现，给插件操作的机会
                     page.wait.ele_displayed('css:iframe[src*="cloudflare"], iframe[src*="turnstile"]', timeout=10)
                     
-                    # 纯等待，让子弹飞一会儿
+                    # 纯等待，让插件去点
                     time.sleep(10)
                     
                     confirm_btn = modal.ele('css:button[type="submit"].btn-primary')
@@ -176,7 +173,7 @@ def job():
                             break 
                         
                         if result == "FAIL_CAPTCHA":
-                            log("⚠️ 插件可能还没点完，刷新重试...")
+                            log("⚠️ 插件操作未完成，刷新重试...")
                             time.sleep(2)
                             continue
                     else:
