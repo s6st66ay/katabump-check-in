@@ -8,11 +8,6 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 
 # ==================== 实时日志工具 ====================
 def log(message):
-    """
-    实时日志打印函数
-    1. 自动添加当前时间 (北京时间需 +8，但 GitHub 默认 UTC，这里只显示相对时间)
-    2. flush=True 强制立即输出，防止 GitHub Actions 日志延迟
-    """
     current_time = datetime.datetime.now().strftime("%H:%M:%S")
     print(f"[{current_time}] {message}", flush=True)
 
@@ -44,21 +39,32 @@ def download_and_extract_silk_extension():
         return None
     except: return None
 
-def wait_for_cloudflare(page, timeout=10):
-    log(f"--- [盾] 检查 Cloudflare (限时 {timeout}s)...")
+def wait_for_cloudflare(page, timeout=15):
+    """
+    【增强版】过盾检测
+    不仅看标题，还看页面里有没有盾的 iframe
+    """
+    log(f"--- [盾] 正在扫描全页验证码 (限时 {timeout}s)...")
     start = time.time()
     while time.time() - start < timeout:
-        if "just a moment" not in page.title.lower():
-            if not page.ele('@src^https://challenges.cloudflare.com'):
-                return True
-        try:
-            iframe = page.get_frame('@src^https://challenges.cloudflare.com')
-            if iframe: 
+        # 1. 检查标题是否包含 Cloudflare 特征
+        is_blocked_title = "just a moment" in page.title.lower()
+        
+        # 2. 检查页面内是否有验证码 iframe
+        iframe = page.ele('@src^https://challenges.cloudflare.com')
+        
+        if not is_blocked_title and not iframe:
+            return True # 通行
+            
+        if iframe:
+            log("--- [盾] 发现验证码，尝试点击...")
+            try:
                 iframe.ele('tag:body').click(by_js=True)
-                log("--- [盾] 点击了全页验证框")
-                time.sleep(1)
-        except: pass
+                time.sleep(2) # 点完等一下
+            except: pass
+            
         time.sleep(1)
+    
     return False
 
 def solve_modal_captcha(modal):
@@ -74,7 +80,6 @@ def solve_modal_captcha(modal):
         log(">>> [验证] 发现验证码，点击中...")
         try:
             iframe.ele('tag:body').click(by_js=True)
-            # 倒计时显示，让你知道它在干嘛
             for i in range(4, 0, -1):
                 log(f">>> [验证] 等待验证通过... {i}s")
                 time.sleep(1)
@@ -104,7 +109,7 @@ def check_result(page):
         full_text = page.html.lower()
         
         if "captcha" in full_text or "验证码" in full_text:
-            log("❌ 结果: 验证码拦截")
+            log("❌ 结果: 验证码拦截 (页面包含 Captcha 字样)")
             return "FAIL"
         
         if "can't renew" in full_text or "too early" in full_text:
@@ -130,10 +135,10 @@ def job():
     co.set_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
     if ext_path: co.add_extension(ext_path)
     co.auto_port()
-    co.set_load_mode('none') # 极速加载模式
+    co.set_load_mode('none')
 
     page = ChromiumPage(co)
-    page.set.timeouts(10)
+    page.set.timeouts(15)
 
     try:
         email = os.environ.get("KB_EMAIL")
@@ -156,7 +161,6 @@ def job():
             page.ele('css:button[type="submit"]').click()
             
             log(">>> 等待页面跳转...")
-            # 实时检测 URL 变化
             start_wait = time.time()
             while time.time() - start_wait < 10:
                 if "login" not in page.url:
@@ -171,7 +175,11 @@ def job():
             try:
                 page.get(target_url)
                 
-                # 寻找按钮，每秒汇报
+                # 【关键修复】进入页面后，立刻检查是否有全屏盾
+                # 之前这里漏掉了，导致直接去抓按钮抓不到
+                wait_for_cloudflare(page, timeout=15)
+                
+                # 寻找按钮
                 renew_btn = None
                 for _ in range(5):
                     renew_btn = page.ele('css:button:contains("Renew")')
@@ -180,19 +188,24 @@ def job():
                     time.sleep(1)
                 
                 if not renew_btn:
-                    log("⚠️ 未找到 Renew 按钮，检查是否已续期...")
-                    if check_result(page) == "SUCCESS": 
+                    log("⚠️ 未找到 Renew 按钮，检查是否被拦截或已续期...")
+                    # 此时如果没有按钮，check_result 可能会发现 captcha
+                    res = check_result(page)
+                    if res == "SUCCESS": 
                         break
+                    elif res == "FAIL":
+                        log("⚠️ 检测到拦截，刷新页面重试...")
+                        continue # 触发下一次重试
+                    
+                    # 既没按钮，也没检测到 captcha 关键字，可能是网络卡了，重试
                     continue
 
                 robust_click(renew_btn)
                 
-                # 等待弹窗
                 log(">>> 等待弹窗弹出...")
                 modal = page.wait.ele_displayed('css:.modal-content', timeout=5)
                 
                 if modal:
-                    # 处理验证码
                     solve_modal_captcha(modal)
                     
                     confirm = modal.ele('css:button.btn-primary')
