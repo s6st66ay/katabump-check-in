@@ -222,11 +222,23 @@ def job():
             log(f"\n🚀 [Step 2] 尝试续期 (第 {attempt} 次)...")
             page.get(target_url)
             pass_full_page_shield(page)
-            
+
+            # 如果被跳转回 Dashboard，说明 target_url 不可用/无权限/资源不存在
+            if "dashboard" in (page.url or "").lower():
+                log(f"❌ 访问续期页面后被跳回 Dashboard：{page.url}")
+                dump_debug_artifacts(page, label=f"redirect_dashboard_attempt{attempt}")
+                exit(1)
+
             renew_btn = None
-            for _ in range(5):
-                renew_btn = page.ele('css:button[data-bs-target="#renew-modal"]')
-                if renew_btn and renew_btn.states.is_displayed: break
+            for _ in range(8):
+                # 兼容更多按钮形态
+                renew_btn = (
+                    page.ele('css:button[data-bs-target="#renew-modal"]')
+                    or page.ele('css:button:has-text("Renew")')
+                    or page.ele('css:a:has-text("Renew")')
+                )
+                if renew_btn and renew_btn.states.is_displayed:
+                    break
                 time.sleep(1)
 
             if renew_btn:
