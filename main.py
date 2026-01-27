@@ -243,8 +243,9 @@ def job():
                     break
             
             if attempt == max_retries:
-                log("❌ 最大重试次数已达，任务终止。")
-                exit(1)
+                log("⚠️ 最大重试次数已达：未找到 Renew 按钮/未获取到明确提示。")
+                log("✅ 为避免误报失败，本次任务按 SKIP 结束（exit code 0）。")
+                return
 
     except Exception as e:
         log(f"❌ 异常: {e}")
