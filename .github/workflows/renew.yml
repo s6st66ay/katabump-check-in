@@ -35,3 +35,11 @@ jobs:
         run: |
           # 启动 Python (带 -u 参数实时输出)
           python -u main.py
+
+      - name: Upload debug artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-artifacts
+          path: artifacts/**
+          if-no-files-found: ignore

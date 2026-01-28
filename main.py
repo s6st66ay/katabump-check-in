@@ -109,7 +109,15 @@ def manual_click_checkbox(modal):
 def analyze_page_alert(page):
     """解析结果"""
     log(">>> [系统] 检查结果...")
-    
+
+    # 先看成功
+    success = page.ele('css:.alert.alert-success')
+    if success and success.states.is_displayed:
+        log(f"⬇️ 绿色提示: {success.text}")
+        log("🎉 [结果] 续期成功！")
+        return "SUCCESS"
+
+    # 再看失败/提示
     danger = page.ele('css:.alert.alert-danger')
     if danger and danger.states.is_displayed:
         text = danger.text
@@ -119,24 +127,51 @@ def analyze_page_alert(page):
             days = match.group(1) if match else "?"
             log(f"✅ [结果] 未到期 (等待 {days} 天)")
             return "SUCCESS_TOO_EARLY"
-        elif "captcha" in text.lower():
+        if "captcha" in text.lower():
             return "FAIL_CAPTCHA"
         return "FAIL_OTHER"
-
-    success = page.ele('css:.alert.alert-success')
-    if success and success.states.is_displayed:
-        log(f"⬇️ 绿色提示: {success.text}")
-        log("🎉 [结果] 续期成功！")
-        return "SUCCESS"
 
     return "UNKNOWN"
 
 # ==================== 主程序 ====================
+def dump_debug_artifacts(page, label="debug"):
+    """保存截图 + HTML，用于 Actions artifact 诊断"""
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = os.path.abspath("artifacts")
+    os.makedirs(out_dir, exist_ok=True)
+
+    meta_path = os.path.join(out_dir, f"{label}_{ts}.meta.txt")
+    html_path = os.path.join(out_dir, f"{label}_{ts}.html")
+    png_path = os.path.join(out_dir, f"{label}_{ts}.png")
+
+    try:
+        with open(meta_path, "w", encoding="utf-8") as f:
+            f.write(f"url: {getattr(page, 'url', '')}\n")
+            f.write(f"title: {getattr(page, 'title', '')}\n")
+    except Exception as e:
+        log(f"[debug] meta 写入失败: {e}")
+
+    try:
+        html = getattr(page, "html", "")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html if html else "")
+    except Exception as e:
+        log(f"[debug] html 写入失败: {e}")
+
+    try:
+        # DrissionPage: get_screenshot(path=...)
+        page.get_screenshot(path=png_path)
+    except Exception as e:
+        log(f"[debug] screenshot 失败: {e}")
+
+    log(f"[debug] artifacts saved under: {out_dir}")
+
+
 def job():
     # 1. 准备插件
     path_silk = download_silk()
     path_cf = download_cf_autoclick()
-    
+
     # 2. 配置浏览器
     co = ChromiumOptions()
     co.set_argument('--headless=new')
@@ -145,18 +180,18 @@ def job():
     co.set_argument('--disable-dev-shm-usage')
     co.set_argument('--window-size=1920,1080')
     co.set_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
-    
+
     # 3. 同时挂载两个插件
     plugin_count = 0
-    if path_silk: 
+    if path_silk:
         co.add_extension(path_silk)
         plugin_count += 1
-    if path_cf: 
+    if path_cf:
         co.add_extension(path_cf)
         plugin_count += 1
-        
+
     log(f">>> [浏览器] 已挂载插件数量: {plugin_count}")
-        
+
     co.auto_port()
     page = ChromiumPage(co)
     page.set.timeouts(15)
@@ -187,11 +222,23 @@ def job():
             log(f"\n🚀 [Step 2] 尝试续期 (第 {attempt} 次)...")
             page.get(target_url)
             pass_full_page_shield(page)
-            
+
+            # 如果被跳转回 Dashboard，说明 target_url 不可用/无权限/资源不存在
+            if "dashboard" in (page.url or "").lower():
+                log(f"❌ 访问续期页面后被跳回 Dashboard：{page.url}")
+                dump_debug_artifacts(page, label=f"redirect_dashboard_attempt{attempt}")
+                exit(1)
+
             renew_btn = None
-            for _ in range(5):
-                renew_btn = page.ele('css:button[data-bs-target="#renew-modal"]')
-                if renew_btn and renew_btn.states.is_displayed: break
+            for _ in range(8):
+                # 兼容更多按钮形态
+                renew_btn = (
+                    page.ele('css:button[data-bs-target="#renew-modal"]')
+                    or page.ele('css:button:has-text("Renew")')
+                    or page.ele('css:a:has-text("Renew")')
+                )
+                if renew_btn and renew_btn.states.is_displayed:
+                    break
                 time.sleep(1)
 
             if renew_btn:
@@ -243,7 +290,9 @@ def job():
                     break
             
             if attempt == max_retries:
-                log("❌ 最大重试次数已达，任务终止。")
+                # 严格模式：只有真正 SUCCESS / SUCCESS_TOO_EARLY 才算成功。
+                log("❌ 最大重试次数已达：仍未完成续期/未获得明确可接受结果。")
+                dump_debug_artifacts(page, label="final")
                 exit(1)
 
     except Exception as e:
